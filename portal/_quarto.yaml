@@ -1,0 +1,36 @@
+project:
+  type: website
+  output-dir: .quarto/output
+  preview:
+    port: 5000
+  render:
+    - data_quality_report.qmd
+    - made_up_history_report.qmd
+
+format:
+  html:
+    anchor-sections: true
+    smooth-scroll: true
+    theme: sandstone
+
+website:
+  title: "Data Quality Report: Demand Forecasting"
+  repo-url: https://github.com/spm/modern_data_quality_stack
+  repo-actions: [edit, issue]
+  page-footer: Made with ❤️ by DataZoo GmbH
+  navbar:
+    search: false
+    left:
+      - text: Data Quality
+        icon: clipboard-data
+        href: data_quality_report.html
+      - text: Made-Up History
+        icon: clipboard-data
+        href: made_up_history_report.html
+    tools:
+      - icon: github
+        menu:
+          - text: Source Code
+            url: https://github.com/spm/modern_data_quality_stack
+          - text: Create an Issue
+            url: https://github.com/spm/modern_data_quality_stack/issues/new

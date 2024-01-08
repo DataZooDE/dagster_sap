@@ -1,0 +1,41 @@
+[project]
+name = "SAP RFC Integration"
+version = "1.0.0"
+authors = [{ name = "Simon Müller" }]
+dependencies = [
+    "altair",
+    "dagster-dbt",
+    "dagster-duckdb-pandas",
+    "dagster",
+    "dbt-core",
+    "dbt-duckdb",
+    "duckdb",
+    "frictionless",
+    "ipykernel",
+    "ipywidgets",
+    "itables",
+    "nbclient",
+    "nbformat",
+    "pyarrow",
+    "regex"
+]
+
+requires-python = ">=3.11, <=3.12"
+readme = "README.md"
+license = { text = "MIT" }
+
+[project.urls]
+Homepage = "https://erpl.io"
+Changelog = "https://github.com/DataZooDE/dagster_sap/commits/main/"
+Issues = "https://github.com/DataZooDE/dagster_sap/issues"
+CI = "https://github.com/DataZooDE/dagster_sap/actions"
+
+[project.optional-dependencies]
+dev = ["dagit", "shandy-sqlfmt[jinjafmt]", "ruff"]
+
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["sap"]

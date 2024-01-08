@@ -1,0 +1,116 @@
+---
+title: "Made-Up History"
+execute:
+  echo: false
+format:
+  dashboard:
+    theme: sandstone
+    
+params:
+  current_id: 20240105
+  reference_id: 20231205
+---
+
+```{r}
+#| label: load-packages
+#| message: false
+library(duckdb)
+library(crosstalk)
+library(DT)
+library(dplyr)
+library(ggplot2)
+library(plotly)
+library(tidyr)
+library(xlsx)
+
+number <- scales::number_format(big.mark = ",")
+
+con <- dbConnect(duckdb(), dbdir = "../data/local.duckdb", shutdown=TRUE)
+statistics_tbl <- dbGetQuery(con, "SELECT * FROM madeuphistory_vs_requested_delivery_date")
+
+dbDisconnect(con, shutdown=TRUE)
+
+
+statistics_tbl = statistics_tbl |>
+  mutate(muh_qty_rdd_qty = muh_qty / rdd_qty,
+         full = muh_qty + rdd_qty,
+         muh_perc = muh_qty / full, 
+         rdd_perc = rdd_qty / full) |>
+  rename(`Made-Up History Qty` = muh_qty,
+         `Requested Delivery Date Qty` = rdd_qty,
+         `Made-Up History Qty / Made-Up History Qty` = muh_qty_rdd_qty) 
+
+file_name = paste0(".quarto/output/", params$current_id, "_", params$reference_id, " Made-Up History.xlsx")
+write.xlsx(statistics_tbl |> select(site, part, `Made-Up History Qty`, `Requested Delivery Date Qty`, `Made-Up History Qty / Made-Up History Qty`), file_name, sheetName = "MUH", col.names = TRUE, row.names = FALSE, append = FALSE)
+```
+
+
+#  {.sidebar}
+This dashboard displays statistics for comparing the input & output of the current versus the reference run:
+
+| Parameter      | Value                     |
+|----------------|---------------------------|
+| **Current**    | `  `r params$current_id` `|
+| **Reference**  |` `r params$reference_id` `|
+
+------------------------------------------------------------------------
+
+**Statistic Parameters**
+
+| Parameter    | Value |
+|-------------------------|----------------------|
+| **T-Stat for Medium**   | `1.0 < T <= 1.64`    |
+| **T-Stat for Critical** | `1.64 < T`           |
+
+------------------------------------------------------------------------
+
+**Kärcher Specific Parameters**
+
+The datasets are filtered as follows:
+
+| Parameter    | Value                   |
+|--------------|-------------------------|
+| **Category** | `RequestedDeliveryDate` |
+| **QTY**      | `Corrected`             |
+| **PiPo**     | `FALSE`                 |
+
+------------------------------------------------------------------------
+
+
+# Deviations in Forecast Items
+
+## Row
+
+```{r}
+#| content: valuebox
+#| title: "Number of Forecast Items with MUH"
+
+list(
+  icon = "info-circle",
+  color = "info",
+  value = number(nrow(statistics_tbl))
+)
+```
+
+
+## Row
+
+## Column
+
+```{r}
+#| title: Test Statistics for Medium & Critical Deviations
+
+statistics_tbl |>
+  datatable(rownames = FALSE,
+            extensions = "Buttons", 
+    options = list(
+      dom = "lrtip", 
+      paging = FALSE,
+      pageLength = 25, 
+      scrollY = FALSE,
+      selection = "single"
+    ),
+     filter = list(position = 'top', clear = FALSE)
+  ) |>
+  formatPercentage(columns="Made-Up History Qty / Made-Up History Qty")
+```

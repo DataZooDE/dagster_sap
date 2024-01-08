@@ -1,0 +1,17 @@
+version: 2
+
+sources:
+  - name: local
+    tables:
+      - name: current
+        description: Current raw data
+        meta:
+          group: raw
+          source: raw
+          external_location: ../data/current.tab
+      - name: reference
+        description: Reference raw data
+        meta:
+          group: raw
+          source: raw
+          external_location: ../data/reference.tab

@@ -1,0 +1,411 @@
+---
+title: "Data Quality: Comparing Current versus Reference"
+execute:
+  echo: false
+format:
+  dashboard:
+    theme: sandstone
+    
+params:
+  current_id: 20240105
+  reference_id: 20231205
+  split_char: "_"
+  hierarchy: ["site", "part"]
+---
+
+```{r}
+#| label: load-packages
+#| message: false
+library(duckdb)
+library(crosstalk)
+library(DT)
+library(dplyr)
+library(ggplot2)
+library(plotly)
+library(xlsx)
+
+number <- scales::number_format(big.mark = ",")
+con <- dbConnect(duckdb(), dbdir = "../data/local.duckdb", shutdown=TRUE)
+
+############################################################################################
+# Statistical values for Value Boxes
+# Critical statistics
+n_with_deviation <- dbGetQuery(con, "SELECT COUNT(*) AS n FROM data_quality_statistics_current_reference WHERE ABS(ttest) > 0")
+n_with_deviation = n_with_deviation$n
+
+# Medium
+n_with_warning <- dbGetQuery(con, "SELECT COUNT(*) AS n FROM data_quality_statistics_current_reference WHERE ABS(ttest) > 1.0 AND ABS(ttest) < 1.64")
+n_with_warning = n_with_warning$n
+
+n_with_danger <- dbGetQuery(con, "SELECT COUNT(*) AS n FROM data_quality_statistics_current_reference WHERE ABS(ttest) >= 1.64")
+n_with_danger = n_with_danger$n
+############################################################################################
+
+
+############################################################################################
+# Extract statistics table for medium and critical forecast items
+statistics_critical_tbl <- dbGetQuery(con, "SELECT * FROM data_quality_statistics_current_reference WHERE ABS(ttest) > 1.0") |>
+    select(-n, -start_date, -end_date) |>
+    mutate(category = ifelse(abs(ttest) <= 1.64, "Medium", "Critical"),
+           color    = ifelse(category == 'Medium', "#af8e08", "#d9534f"))
+
+# Shared object
+statistics_critical_tbl <- SharedData$new(statistics_critical_tbl |>   mutate(id = paste0(site, "_", part)), ~id, group="ts_selection")
+############################################################################################
+
+
+############################################################################################
+# Query & prepare timeseries data
+joined_tbl <- dbGetQuery(con, "SELECT * FROM staging_joined_req_del")
+
+joined_tbl = joined_tbl |>
+  dplyr::left_join(statistics_critical_tbl |> select(site, part, ttest), by=c("site", "part")) |>
+  filter(!is.na(ttest)) |>
+  mutate(id = paste0(site, "_", part)) |>
+  filter(date <= "2023-11-01") |>
+  select(-ttest)
+
+# Shared object
+joined_tbl <- SharedData$new(joined_tbl, ~id, group="ts_selection")
+############################################################################################
+
+
+############################################################################################
+# Number of Keys in Current & Reference
+n_keys_intersection <- dbGetQuery(con, "SELECT COUNT(*) FROM data_quality_statistics_current_reference")
+n_keys_intersection = n_keys_intersection$n
+
+res <- dbGetQuery(con, "SELECT * FROM missing_keys_current")
+missing_keys_current_tbl <- SharedData$new(res)
+
+res <- dbGetQuery(con, "SELECT * FROM missing_keys_reference")
+missing_keys_reference_tbl <- SharedData$new(res)
+############################################################################################
+
+
+############################################################################################
+# Excel Export of Statistics
+file_name = paste0(".quarto/output/", params$current_id, "_", params$reference_id, " Data Quality Statistics.xlsx")
+write.xlsx(statistics_critical_tbl$origData() |> select(-color, -id), file_name, sheetName = "MUH", col.names = TRUE, row.names = FALSE, append = FALSE)
+############################################################################################
+
+dbDisconnect(con, shutdown=TRUE)
+```
+
+
+#  {.sidebar}
+This dashboard displays statistics for comparing the input & output of the current versus the reference run:
+
+| Parameter      | Value                     |
+|----------------|---------------------------|
+| **Current**    | `  `r params$current_id` `|
+| **Reference**  |` `r params$reference_id` `|
+
+------------------------------------------------------------------------
+
+**Statistic Parameters**
+
+| Parameter    | Value |
+|-------------------------|----------------------|
+| **T-Stat for Medium**   | `1.0 < T <= 1.64`    |
+| **T-Stat for Critical** | `1.64 < T`           |
+
+------------------------------------------------------------------------
+
+**Kärcher Specific Parameters**
+
+The datasets are filtered as follows:
+
+| Parameter    | Value                   |
+|--------------|-------------------------|
+| **Category** | `RequestedDeliveryDate` |
+| **QTY**      | `Corrected`             |
+| **PiPo**     | `FALSE`                 |
+
+------------------------------------------------------------------------
+
+
+# Deviations in Forecast Items
+
+## Row
+
+```{r}
+#| content: valuebox
+#| title: "Number of Deviations"
+
+list(
+  icon = "info-circle",
+  color = "primary",
+  value = number(n_with_deviation)
+)
+```
+```{r}
+#| content: valuebox
+#| title: "Number of Medium Deviations"
+
+list(
+  icon = "exclamation-circle",
+  color = "warning",
+  value = number(n_with_warning)
+)
+```
+
+```{r}
+#| content: valuebox
+#| title: "Number of Critical Deviations"
+
+list(
+  icon = "x-circle",
+  color = "danger",
+  value = number(n_with_danger)
+)
+```
+
+## Row
+
+## Column
+
+```{r}
+#| title: Test Statistics for Medium & Critical Deviations
+
+statistics_critical_tbl |>
+  datatable(rownames = FALSE,
+    options = list(
+      dom = "lrtip", 
+      paging = FALSE,
+      pageLength = 25, 
+      scrollY = FALSE,
+      selection = "single"
+    ),
+     filter = list(position = 'top', clear = FALSE)
+  ) |>
+  formatRound(columns=c("mean_current", "mean_reference", "std_current", "std_reference", "mean_difference", "ttest"))
+```
+
+## Row
+
+### Column {.tabset width="50%"}
+
+```{r}
+#| title: Demand Series
+plot_ly(joined_tbl, x = ~date, y=~current_qty, type = 'scatter', mode = 'lines', name = "Current") |>
+  plotly::add_lines(x = ~date, y=~reference_qty, name="Reference") |>
+  highlight(opacityDim = 0) |>
+  layout(yaxis = list(matches = "y"))
+```
+
+```{r}
+#| title: Deviations by Site
+statistics_critical_tbl$origData() |>
+  group_by(site) |>
+  count() |>
+  ungroup() |>
+  arrange(-n) -> site_plots_tbl
+
+top_sites = site_plots_tbl$site
+
+statistics_critical_tbl$origData() |>
+  filter(site %in% site_plots_tbl$site) |>
+  group_by(site, category, color) |>
+  count() |>
+  ungroup() |>
+  arrange(-n) -> site_plots_tbl
+
+site_plots_tbl$site = factor(site_plots_tbl$site, levels = rev(top_sites))
+
+
+
+site_plots_tbl |>
+ plotly::plot_ly(
+      x = ~n,
+      y = ~site,
+      color= ~ category,
+      colors = c(Medium = '#af8e08', Critical = '#d9534f'),
+      type = "bar",
+      orientation = "h"
+    ) |>
+    plotly::layout(
+      xaxis = list(title = ""),
+      yaxis = list(title = "", ticksuffix = " ", tickfont = list(size = 10)), 
+      barmode = 'stack'
+    ) |>
+    plotly::config(displayModeBar = F)
+```
+
+
+### Column
+
+```{r}
+#| title: KPIs
+plot_ly(statistics_critical_tbl, 
+      x = ~mean_difference, 
+      y=~ttest, 
+
+      marker = list(
+        size = ~ abs(mean_difference),
+        group    = ~category,
+        color   = ~ color,
+        fill   = ~ color,
+        line = list(width=0),
+        sizeref = 1,
+        sizemode = 'area',
+        opacity = 0.4
+      )
+    ) %>%
+  layout(
+    autosize = TRUE,
+    xaxis = list(
+      zeroline = TRUE,
+      ticks = "outside",
+      tickcolor = "#fff",
+      tickformat = "+",
+      tickfont = list(size = 14),
+      titlefont = list(family = "Open Sans",
+                       size = 20),
+      title = "Mean(Current) - Mean(Reference)"
+    ),
+    yaxis = list(
+      zeroline = TRUE,
+      ticks = "outside",
+      tickcolor = "#fff",
+      tickformat = "+",
+      tickfont = list(size = 14),
+      titlefont = list(family = "Open Sans",
+                       size = 20),
+      title = "T-Statistic"
+    ),
+    hoverlabel = list(font = list(family = "Open Sans",
+                                  size = 16))
+  )
+```
+
+
+
+# Added/Removed Forecast Items
+
+## Row
+
+```{r}
+#| content: valuebox
+#| title: "Number of Forecast Items in Current & Reference"
+
+list(
+  icon = "exclamation-circle",
+  color = "info",
+  value = number(n_keys_intersection)
+)
+```
+
+```{r}
+#| content: valuebox
+#| title: "Number of Missing Forecast Items in Current"
+
+list(
+  icon = "x-circle",
+  color = "danger",
+  value = number(nrow(missing_keys_current_tbl$origData()))
+)
+```
+
+```{r}
+#| content: valuebox
+#| title: "Number of Missing Forecast Items in Reference"
+
+list(
+  icon = "plus-circle",
+  color = "success",
+  value = number(nrow(missing_keys_reference_tbl$origData()))
+)
+```
+
+
+## Row {height="40%"}
+
+### Column {.tabset}
+
+```{r}
+#| title: Missing Keys in Current
+
+missing_keys_current_tbl |>
+  datatable(
+    rownames = FALSE,
+    options = list(
+      dom = "lrtip", 
+      pageLength = 25, 
+      scrollY = TRUE
+    ),
+  )
+```
+
+
+```{r}
+#| title: By Site
+missing_keys_current_tbl$origData() |>
+  group_by(site) |>
+  count() |>
+  ungroup() |>
+  arrange(-n) -> site_plots_tbl
+
+top_sites = site_plots_tbl$site
+
+site_plots_tbl$site = factor(site_plots_tbl$site, levels = rev(top_sites))
+
+
+site_plots_tbl |>
+ plotly::plot_ly(
+      x = ~n,
+      y = ~site,
+      fill= '#d9534f',
+      type = "bar",
+      orientation = "h"
+    ) |>
+    plotly::layout(
+      xaxis = list(title = ""),
+      yaxis = list(title = "", ticksuffix = " ", tickfont = list(size = 10))
+    ) |>
+    plotly::config(displayModeBar = F)
+```
+
+
+### Column {.tabset}
+
+```{r}
+#| title: Missing Keys in Reference
+
+missing_keys_reference_tbl |>
+  datatable(
+    rownames = FALSE,
+    options = list(
+      dom = "lrtip", 
+      pageLength = 25, 
+      scrollY = TRUE
+    )
+  )
+```
+
+```{r}
+#| title: By Site
+missing_keys_reference_tbl$origData() |>
+  group_by(site) |>
+  count() |>
+  ungroup() |>
+  arrange(-n) -> site_plots_tbl
+
+top_sites = site_plots_tbl$site
+
+site_plots_tbl$site = factor(site_plots_tbl$site, levels = rev(top_sites))
+
+site_plots_tbl |>
+ plotly::plot_ly(
+      x = ~n,
+      y = ~site,
+      fill="#93c54b",
+      type = "bar",
+      orientation = "h"
+    ) |>
+    plotly::layout(
+      xaxis = list(title = ""),
+      yaxis = list(title = "", ticksuffix = " ", tickfont = list(size = 10))
+    ) |>
+    plotly::config(displayModeBar = F)
+```
